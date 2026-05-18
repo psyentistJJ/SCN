@@ -1,5 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+from matplotlib.colors import ListedColormap
+from matplotlib.collections import LineCollection
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+import seaborn as sns
 from tqdm import tqdm
 import pandas as pd
 import pickle
@@ -9,7 +15,6 @@ import hashlib
 from datetime import datetime
 from pprint import pprint
 import math
-import seaborn as sns
 import glob
 from numba import njit
 from typing import Any
@@ -21,14 +26,14 @@ def sigmoid(x, alpha=5, theta=0.2):
 def hill(x, n=2, K=0.2):
     return (x**n) / (K**n + x**n)
 
-def sm_simulation(D, sigma, dt=0.1):
+def sm_simulation(D, sigma, rng_m_noise, dt=0.1):
     T = 24 * D
     timesteps = np.arange(0, T, dt) ; duration=len(timesteps)
     omega=(2*np.pi)/24
 
     s = np.zeros(duration)  # true latent phase
     m = np.zeros(duration)  # measurement
-    gaussian_noise = np.random.normal(0, 1, size=duration)
+    gaussian_noise = rng_m_noise.normal(0, 1, size=duration)
 
 
     for t in range(duration):
@@ -50,8 +55,7 @@ def phase2sun(s: np.ndarray):
     return (abs(np.cos(s))+np.cos(s))/2
 
 def plot_dynamics(results: dict,
-                      autoshow: bool = True
-):
+                  autoshow: bool = True):
 
     N, duration =results['z_history'].shape
     dt = results['dt']
@@ -111,7 +115,7 @@ def plot_dynamics(results: dict,
 
         
 
-        #### plot (3) #### 
+        # plot(2)
         fig1 = plt.figure(figsize=(12,5))
         plt.plot(timesteps/24, np.cos(ind_angle), label = 'phase')
         plt.plot(timesteps/24, ind_amplitude, label = 'certainty')
@@ -132,29 +136,25 @@ def plot_dynamics(results: dict,
     
     elif N>=2:
 
-        fig0, axs = plt.subplots(1, 3, figsize=(12, 15))
+        ####### Adjust the figure size dynamically##########
+        x_span = np.nanmax(real_parts[:min(5, N), :]) - np.nanmin(real_parts[:min(5, N), :])
+        y_span = np.nanmax(imag_parts[:min(5, N), :]) - np.nanmin(imag_parts[:min(5, N), :])
 
-        for i in range(5):
-            axs[1].plot(real_parts[i, :], imag_parts[i, :], alpha=0.8)
-        axs[1].axhline(0, color='black', linewidth=0.5)
-        axs[1].axvline(0, color='black', linewidth=0.5)
-        axs[1].set_title("Individual Dynamics")
-        axs[1].set_xlabel("Real Part (Firing Rate Deviation)")
-        axs[1].set_ylabel("Imaginary Part")
-        axs[1].grid(True, linestyle='--', alpha=0.6)
-        axs[1].set_aspect('equal')
+        spread = max(x_span, y_span)
 
+        # dynamically scale figure size
+        base_width = 12
+        base_height = 15
 
-        axs[2].plot(mf_real, mf_imag, c='red', linewidth=1.5)
-        axs[2].axhline(0, color='black', linewidth=0.5)
-        axs[2].axvline(0, color='black', linewidth=0.5)
-        axs[2].set_title("Populational Dynamics")
-        axs[2].set_xlabel("Real Part (Firing Rate Deviation)")
-        axs[2].set_ylabel("Imaginary Part")
-        axs[2].grid(True, linestyle='--', alpha=0.6)
-        axs[2].set_aspect('equal')
+        scale = np.clip(spread / 1.2, 1.0, 2.5)
 
-
+        fig0, axs = plt.subplots(
+            1, 
+            3, 
+            figsize=(base_width * scale, base_height * scale)
+            )
+        
+        #### plot (0) ####  
         steps_per_day = int(24 / dt)
         psi_2d = mf_angle[:].reshape(D, steps_per_day)
 
@@ -171,7 +171,61 @@ def plot_dynamics(results: dict,
         axs[0].set_xlabel('Hour of Day')
         axs[0].set_ylabel('Day')
         #cbar = fig0.colorbar(im, ax=axs[0], shrink = 0.1)
+
+
+        #### plot (1) #### 
+        for i in range(5):
+            axs[1].plot(real_parts[i, :], imag_parts[i, :], alpha=0.8)
+        axs[1].axhline(0, color='black', linewidth=0.5)
+        axs[1].axvline(0, color='black', linewidth=0.5)
+        axs[1].set_title("Individual Dynamics")
+        axs[1].set_xlabel("Real Part (Firing Rate Deviation)")
+        axs[1].set_ylabel("Imaginary Part")
+        axs[1].grid(True, linestyle='--', alpha=0.6)
+        axs[1].set_aspect('equal')
+
+
+        #### plot (2) #### 
+        base_cmap = plt.get_cmap('tab20')
+        
+        # Create a custom colormap that cycles through up to 20 distinct colors 
+        # (If you have more than 20 days, it safely loops back to the start)
+        color_list = [base_cmap(i % 20) for i in range(D)]
+        discrete_cmap = ListedColormap(color_list)
+        
+        for day in range(D):
+            start_idx = day * steps_per_day
+            end_idx = min((day + 1) * steps_per_day + 1, duration)
+            
+            # Fetch the highly distinct color for this specific day
+            color = discrete_cmap(day)
+            
+            # Plot the continuous line for the day
+            axs[2].plot(mf_real[start_idx:end_idx], mf_imag[start_idx:end_idx], 
+                        color=color, linewidth=1.5)
+            
+            # 2. Add a marker at the very first timestep of each day
+            axs[2].plot(mf_real[start_idx], mf_imag[start_idx], 
+                        marker='o', color=color, markersize=6, markeredgecolor='black', markeredgewidth=0.5)
+            
+        axs[2].axhline(0, color='black', linewidth=0.5)
+        axs[2].axvline(0, color='black', linewidth=0.5)
+        axs[2].set_title("Populational Dynamics")
+        axs[2].set_xlabel("Real Part (Firing Rate Deviation)")
+        axs[2].set_ylabel("Imaginary Part")
+        axs[2].grid(True, linestyle='--', alpha=0.6)
+        axs[2].set_aspect('equal')
+
+        sm = plt.cm.ScalarMappable(cmap=base_cmap, norm=mcolors.Normalize(vmin=-0.5, vmax=D-0.5))
+        cbar = fig0.colorbar(sm, ax=axs[2], shrink=0.5)
+        
+        # Format the colorbar ticks to show integer days
+        cbar.set_ticks(range(D))
+        cbar.set_label('Day')
+
         plt.tight_layout()
+
+
 
         fig1, axs = plt.subplots(1, 2, figsize=(15, 5))
         light_onset = results['light_onset']
@@ -183,7 +237,7 @@ def plot_dynamics(results: dict,
         axs[0].set_xticks(range(D+1))
         axs[0].grid(True, axis="x")
         axs[0].axhline(y=0, c='black', linestyle='--')
-        axs[0].axvline(x=timesteps[light_onset]/24, c='black', linestyle='--')
+        axs[0].axvline(x=timesteps[light_onset]/24, c='orange', linestyle=':')
         axs[0].set_xlabel('Time')
         axs[0].set_ylabel('angle (rad)')
         axs[0].legend()
@@ -287,6 +341,7 @@ def SCN_entrain(
         W_std, 
         sweep: bool,
         fastmath: bool = False,
+        single_sample: bool | None = None, 
         std_phase_noise: float = 0.05,
         std_syn_noise: float = 0.0, 
         std_m_noise: float = 0.2, 
@@ -306,16 +361,16 @@ def SCN_entrain(
     #=========================================#
     #               Set init_seed             #
     #=========================================#
-    np.random.seed(init_seed)
-    amplitudes = np.random.uniform(0.01, 0.1, N)
-    phases = np.random.uniform(-np.pi, np.pi, N)
+    rng_init = np.random.default_rng(init_seed)
+    amplitudes = rng_init.uniform(0.01, 0.1, N)
+    phases = rng_init.uniform(-np.pi, np.pi, N)
     z_init = amplitudes * np.exp(1j*phases)
 
     #=========================================#
     #             Set period_seed             #
     #=========================================#
-    np.random.seed(period_seed)
-    periods = np.random.normal(loc=mean_period, scale=std_period, size=N)
+    rng_period = np.random.default_rng(period_seed)
+    periods = rng_period.normal(loc=mean_period, scale=std_period, size=N)
 
     if np.any(periods <= 0):
         raise ValueError(
@@ -328,38 +383,38 @@ def SCN_entrain(
     #=========================================#
     #               Set W_seed                #
     #=========================================#
-    np.random.seed(W_seed)
+    rng_W = np.random.default_rng(W_seed)
     # Connectome W (N x N)
-    topology_mask = np.random.rand(N, N) <= W_prob
+    topology_mask = rng_W.random((N, N)) <= W_prob
     np.fill_diagonal(topology_mask, 0)
-    W = np.random.normal(W_mu, W_std, (N,N)) * topology_mask
+    W = rng_W.normal(W_mu, W_std, (N,N)) * topology_mask
     W = W.astype(np.complex128)
 
     #=========================================#
     #             Set m_noise_seed            #
     #=========================================#
-    np.random.seed(m_noise_seed)
-    s, m = sm_simulation(D=D, sigma=std_m_noise, dt=dt)
+    rng_m_noise = np.random.default_rng(m_noise_seed)
+    s, m = sm_simulation(D=D, sigma=std_m_noise, rng_m_noise = rng_m_noise, dt=dt)
 
 
     #=========================================#
     #           Set phase_noise_seed          #
     #=========================================#
-    np.random.seed(phase_noise_seed)
+    rng_phase_noise = np.random.default_rng(phase_noise_seed)
     # Brownian noise for phases
-    random_kicks = np.random.normal(size=(N,n_timestep))
+    random_kicks = rng_phase_noise.normal(size=(N,n_timestep))
     phase_noise = np.exp(1j * std_phase_noise * random_kicks * np.sqrt(dt)).astype(np.complex128)
 
     #=========================================#
     #           Set syn_noise_seed          #
     #=========================================#
-    np.random.seed(syn_noise_seed)
+    rng_syn_noise = np.random.default_rng(syn_noise_seed)
 
     # Complex isotropic synaptic/input noise.
     # Scaling: sqrt(dt), because this is SDE-style additive noise.
     syn_noise = std_syn_noise * np.sqrt(dt) * (
-        np.random.normal(size=(N, n_timestep))
-        + 1j * np.random.normal(size=(N, n_timestep))
+        rng_syn_noise.normal(size=(N, n_timestep))
+        + 1j * rng_syn_noise.normal(size=(N, n_timestep))
     ) / np.sqrt(2)
 
     syn_noise = syn_noise.astype(np.complex128)
@@ -405,8 +460,13 @@ def SCN_entrain(
     R_phase = np.abs(np.mean(phase_only_vectors, axis=0)) 
 
     if not sweep:
-        verbose = True
+        if single_sample == True:
+            verbose = False
+        else: 
+            verbose = True
+
         entrainment_benchmark(z_history, s, timesteps, dt, light_onset, warmup_days=2, verbose=verbose)
+        
         return {
             'timesteps': timesteps, 
             'dt':dt, 
@@ -418,11 +478,11 @@ def SCN_entrain(
             'light_onset': light_onset
             }
         
-    if sweep:
+    elif sweep:
         verbose = False
         plv, phase_rmse, period_error, phase_coherence = entrainment_benchmark(
             z_history, s, timesteps, dt, light_onset, warmup_days=2, verbose=verbose)
-        
+    
         return {
             'plv': plv, 
             'phase_rmse': phase_rmse, 
@@ -489,6 +549,7 @@ def entrainment_benchmark(
     phase_coherence = np.mean(np.abs(np.mean(phase_only_vectors, axis=0)))
 
     if verbose:
+        print(f"network period: {network_period}")
         print("====== SCN TRACKING BENCHMARKS ======")
         print(f"1. Phase-Locking Value (PLV) : {plv:.4f}  (Ideal: 1.0 -> Stable locking)")
         print(f"2. Circular RMSE             : {rmse:.4f} π (Ideal: 0.0 -> Perfect prediction)")
@@ -1069,3 +1130,508 @@ def print_sweep_tree(folder="output data/1D sweep"):
                         print(f"   │    │    └── 📄 Hash: {row['hash_id']}  (Run: {row['timestamp']})")
             print("") 
         
+
+
+def run_1D_ensemble(
+        base_config: dict,
+        sweep_param: str,
+        sweep_range: np.ndarray,
+        n_sample: int = 5,
+        master_seed: int = 42
+):
+    """
+    The Unified 'God-Mode' Engine. 
+    Handles simulation, granular caching, and macroscopic aggregation in one pass.
+    """
+    sweep = True
+
+    background_config = base_config.copy()
+    background_config['sweep'] = sweep
+
+
+    background_config.pop(sweep_param, None)
+
+    legacy_seeds = ['init_seed', 'period_seed', 'W_seed', 'm_noise_seed', 'phase_noise_seed', 'syn_noise_seed']
+    for key in legacy_seeds:
+        background_config.pop(key, None)
+
+    sweep_interval = np.round(sweep_range[1] - sweep_range[0], 5) if len(sweep_range) > 1 else 0.0
+
+    # ==========================================
+    # 1. ENSEMBLE IDENTITY (The Macro Cache)
+    # ==========================================
+    experiment_identity = {
+        'sweep_param': sweep_param,
+        'sweep_range': list(sweep_range),
+        'n_sample': n_sample,
+        'master_seed': master_seed,
+        'background_config': background_config
+    }
+    encoded_dict = json.dumps(experiment_identity, sort_keys=True, default=str).encode()
+    ens_hash = hashlib.md5(encoded_dict).hexdigest()[:8]
+    
+    # We create two directories now: one for the final results, one for the individual universes
+    ens_dir = "output data/1D ensemble/ensembles"
+    sample_dir = "output data/1D ensemble/samples"
+    os.makedirs(ens_dir, exist_ok=True)
+    os.makedirs(sample_dir, exist_ok=True)
+    
+    ens_filepath = f"{ens_dir}/ENS_1D_{sweep_param}_{ens_hash}.pkl"
+
+    if os.path.exists(ens_filepath):
+        print(f"Macro-state already computed! Loading cached ensemble: {ens_hash}")
+        with open(ens_filepath, 'rb') as f:
+            return pickle.load(f)
+
+    # ==========================================
+    # 2. THE SEED MANAGER & INCREMENTAL COMPUTE
+    # ==========================================
+    master_seq = np.random.SeedSequence(master_seed)
+    streams = master_seq.spawn(n_sample * 6)
+    
+    all_raw_dfs = []
+    idx = 0
+    
+    for i in range(n_sample):
+        # Build the exact mathematical identity of THIS specific universe
+        pack = {
+            'init_seed': streams[idx].generate_state(1)[0],
+            'period_seed': streams[idx+1].generate_state(1)[0],
+            'W_seed': streams[idx+2].generate_state(1)[0],
+            'm_noise_seed': streams[idx+3].generate_state(1)[0],
+            'phase_noise_seed': streams[idx+4].generate_state(1)[0],
+            'syn_noise_seed': streams[idx+5].generate_state(1)[0]
+        }
+        idx += 6
+
+        # Create a unique hash just for this one universe
+        sample_identity = {
+            'sweep_param': sweep_param,
+            'sweep_interval': sweep_interval,
+            'seed_pack': pack,
+            'background_config': background_config
+        }
+        sample_hash = hashlib.md5(json.dumps(sample_identity, sort_keys=True, default=str).encode()).hexdigest()[:8]
+        sample_filepath = f"{sample_dir}/1D_sample_{sweep_param}_{sample_hash}.pkl"
+
+        if os.path.exists(sample_filepath):
+            with open(sample_filepath, 'rb') as f:
+                existing_df = pickle.load(f)
+            
+            # NEW: find only the requested x-values missing from the cached sample
+            existing_xs = existing_df[sweep_param].values
+            missing_xs = [x for x in sweep_range if not any(np.isclose(x, existing_xs, atol=1e-5))]
+            
+            # NEW: exact cache hit branch
+            if len(missing_xs) == 0:
+                print(f"--- Sample {i+1}/{n_sample} [100% CACHED] ---")
+                df = existing_df
+
+            # NEW: partial cache hit branch
+            else:
+                print(f"--- Sample {i+1}/{n_sample} [PARTIAL: Computing {len(missing_xs)} new points] ---")
+                result_list = []
+                for x in tqdm(missing_xs, leave=False):
+                    results = SCN_entrain(**{**background_config, sweep_param: x, **pack})
+                    results[sweep_param] = x
+                    result_list.append(results)
+                
+                # NEW: merge old cached points with newly computed points
+                df = (
+                    pd.concat([existing_df, pd.DataFrame(result_list)])
+                    .sort_values(by=sweep_param)
+                    .reset_index(drop=True)
+                )
+
+                # NEW: update sample cache after stitching
+                with open(sample_filepath, 'wb') as f:
+                    pickle.dump(df, f)
+
+        else:
+            # CHANGED: print label now explicitly marks this as a new sample
+            print(f"--- Simulating Sample {i+1}/{n_sample} [NEW] ---")
+            result_list = []
+            for x in tqdm(sweep_range, leave=False):
+                results = SCN_entrain(**{**background_config, sweep_param: x, **pack})
+                results[sweep_param] = x
+                result_list.append(results)
+                
+            df = pd.DataFrame(result_list)
+            with open(sample_filepath, 'wb') as f:
+                pickle.dump(df, f)
+
+        # NEW: filter cached/stiched sample back down to today's requested sweep_range
+        mask = df[sweep_param].apply(lambda x: any(np.isclose(x, sweep_range, atol=1e-5)))
+        df_filtered = df[mask].copy()
+        df_filtered['sample_ID'] = i
+        all_raw_dfs.append(df_filtered)
+
+    # ==========================================
+    # 3. MACROSCOPIC AGGREGATION & SAVING
+    # ==========================================
+    massive_raw_df = pd.concat(all_raw_dfs, ignore_index=True)
+    metrics = [col for col in massive_raw_df.columns if col not in [sweep_param, 'sample_ID']]
+    
+    agg_df = massive_raw_df.groupby(sweep_param)[metrics].agg(['mean', 'std']).reset_index()
+    agg_df.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in agg_df.columns]
+
+    max_spaghetti_samples = min(n_sample, 10)
+    capped_df = massive_raw_df[massive_raw_df['sample_ID'] < max_spaghetti_samples]
+
+    payload = {
+        'metadata': experiment_identity,
+        'data': agg_df,
+        'raw_data': capped_df,
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    with open(ens_filepath, 'wb') as f:
+        pickle.dump(payload, f)
+        
+    print(f"\n ENSEMBLE COMPLETE. Macroscopic state secured in {ens_filepath}")
+
+    # ==========================================
+    # 4. MASTER LEDGER UPDATE
+    # ==========================================
+    ledger_path = f"{ens_dir}/_MASTER_LEDGER.csv"
+    ledger_entry = {
+        'timestamp': payload['timestamp'],
+        'hash_id': ens_hash,
+        'sweep_param': sweep_param,
+        'n_sample': n_sample,
+        'master_seed': master_seed,
+        **background_config
+    }
+    
+    new_row = pd.DataFrame([ledger_entry])
+    if os.path.exists(ledger_path):
+        pd.concat([pd.read_csv(ledger_path), new_row], ignore_index=True).to_csv(ledger_path, index=False)
+    else:
+        new_row.to_csv(ledger_path, index=False)
+
+    return payload
+
+def plotting_1D_ensemble(payload, mode='standard'):
+    """
+    Integrated Plotting Function for ALL benchmarks.
+    mode: 'standard' (Mean + Shaded Std Dev) or 'overlay' (Individual samples + Mean)
+    """
+    df = payload['data']
+    raw_df = payload['raw_data']
+    meta = payload['metadata']
+    sweep_param = meta['sweep_param']
+    
+    # 1. Identify all benchmarks automatically
+    benchmarks = [col.replace('_mean', '') for col in df.columns if col.endswith('_mean')]
+    num_plots = len(benchmarks)
+    
+    # 2. Set up the dynamic grid (Works for both modes now)
+    cols = 2
+    rows = math.ceil(num_plots / cols)
+    fig, axs = plt.subplots(rows, cols, figsize=(12, 4 * rows))
+    
+    if num_plots > 1:
+        axs = axs.flatten()
+    else:
+        axs = [axs]
+
+    # 3. Loop through every benchmark and plot
+    for i, bm in enumerate(benchmarks):
+        x = df[sweep_param]
+        y_mean = df[f"{bm}_mean"]
+        
+        if mode == 'overlay':
+            # Plot individual micro-trajectories (Spaghetti) for this specific benchmark
+            if 'sample_ID' in raw_df.columns:
+                for s_id in raw_df['sample_ID'].unique():
+                    universe = raw_df[raw_df['sample_ID'] == s_id]
+                    # We don't label individual seeds here to prevent massive legend bloat
+                    axs[i].plot(universe[sweep_param], universe[bm], 
+                             alpha=0.3, linewidth=1.2)
+            
+            # Plot the solid mean line over them
+            axs[i].plot(x, y_mean, color='black', linewidth=2.5, label='Ensemble Mean')
+            
+        elif mode == 'standard':
+            # Standard Mode (Mean + Shaded Std Dev)
+            y_std = df[f"{bm}_std"]
+            axs[i].plot(x, y_mean, label='Mean', color='blue', linewidth=2)
+            axs[i].fill_between(x, y_mean - y_std, y_mean + y_std, alpha=0.2, color='blue')
+        
+        else: 
+            axs[i].plot(x, y_mean, label='Mean', color='blue', linewidth=2)
+            
+        # Common formatting
+        axs[i].set_title(bm.upper(), fontweight='bold')
+        axs[i].set_xlabel(sweep_param)
+        axs[i].grid(True, alpha=0.3, linestyle='--')
+        
+        # Add the zero-line strictly for period_error to easily spot phase-locking
+        if bm == 'period_error' and (y_mean.min() < 0 and y_mean.max() > 0):
+            axs[i].axhline(y=0, color='red', linestyle='--', alpha=0.5)
+            
+        axs[i].legend()
+
+    # 4. Hide empty subplots
+    for j in range(num_plots, len(axs)):
+        fig.delaxes(axs[j])
+
+    # Super title based on mode
+    mode_title = "MACRO-STATE (Mean + Variance)" if mode == 'standard' else "MICRO-STATE (Individual Trajectories)"
+    fig.suptitle(f"1D ENSEMBLE SWEEP: {mode_title}", fontsize=16, fontweight='bold', y=1.02)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_inspection_grid(payload, target_metric='period_error', xlim=None):
+    raw_df = payload['raw_data']
+    meta = payload['metadata']
+    sweep_param = meta['sweep_param']
+    
+    sample_ids = raw_df['sample_ID'].unique()
+    num_samples = len(sample_ids)
+    
+    cols = 3
+    rows = math.ceil(num_samples / cols)
+    
+    # We remove sharey=True to allow individual auto-scaling
+    fig, axs = plt.subplots(rows, cols, figsize=(15, 4 * rows))
+    axs = axs.flatten() if num_samples > 1 else [axs]
+    
+    for i, s_id in enumerate(sample_ids):
+        universe = raw_df[raw_df['sample_ID'] == s_id]
+        
+        # 1. Plot individual data
+        axs[i].plot(universe[sweep_param], universe[target_metric], 
+                 color='blue', alpha=0.8, linewidth=1.5, label=f'Seed {s_id}')
+        
+        if target_metric == 'period_error':
+            axs[i].axhline(y=0, color='red', linestyle='--', alpha=0.4)
+        
+        # 2. DYNAMIC PADDING LOGIC (X and Y)
+        if xlim is not None:
+            x_min, x_max = xlim
+            x_range = x_max - x_min
+            x_pad = x_range * 0.05 # 5% breathing room
+            
+            # Apply padded X-limits
+            axs[i].set_xlim(x_min - x_pad, x_max)
+            
+            # Find the data subset that is actually visible to calculate Y-padding
+            visible_data = universe[(universe[sweep_param] >= x_min) & 
+                                    (universe[sweep_param] <= x_max)]
+            
+            if not visible_data.empty:
+                y_min = visible_data[target_metric].min()
+                y_max = visible_data[target_metric].max()
+                
+                # Add a 10% Y-buffer so the line doesn't touch top/bottom
+                y_pad = (y_max - y_min) * 0.1 if y_max != y_min else 0.5
+                axs[i].set_ylim(y_min - y_pad, y_max + y_pad)
+        
+        axs[i].set_title(f"Sample {s_id}", fontweight='bold')
+        axs[i].grid(True, alpha=0.2, linestyle='--')
+        axs[i].legend(loc='best', fontsize='small')
+
+    fig.suptitle(f"Micro-Inspection: {target_metric.upper()}", 
+                 fontsize=16, fontweight='bold', y=1.02)
+    
+    # Label outer axes
+    for ax in axs[-cols:]:
+        ax.set_xlabel(sweep_param)
+    for ax in axs[::cols]:
+        ax.set_ylabel(target_metric)
+
+    for j in range(num_samples, len(axs)):
+        fig.delaxes(axs[j])
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_unwrapped_phase_walk(base_config, D, sweep_param, target_value, sample_id, master_seed=42):
+    """
+    Summons a specific sample at a specific parameter point to investigate time-series phase slips.
+    """
+    # 1. Reverse-engineer the exact seed pack for this specific sample_ID
+    master_seq = np.random.SeedSequence(master_seed)
+    # We spawn exactly enough streams to reach the requested sample
+    streams = master_seq.spawn((sample_id + 1) * 6) 
+    
+    idx = sample_id * 6
+    pack = {
+        'init_seed': streams[idx].generate_state(1)[0],
+        'period_seed': streams[idx+1].generate_state(1)[0],
+        'W_seed': streams[idx+2].generate_state(1)[0],
+        'm_noise_seed': streams[idx+3].generate_state(1)[0],
+        'phase_noise_seed': streams[idx+4].generate_state(1)[0],
+        'syn_noise_seed': streams[idx+5].generate_state(1)[0]
+    }
+    
+    # 2. Prepare the config for a SINGLE run (sweep=False)
+    sim_config = base_config.copy()
+    sim_config['sweep'] = False
+    sim_config['single_sample'] = True
+    sim_config[sweep_param] = target_value
+    sim_config['D'] = D
+    
+    # Strip any legacy seeds just in case
+    for key in ['init_seed', 'period_seed', 'W_seed', 'm_noise_seed', 'phase_noise_seed', 'syn_noise_seed']:
+        sim_config.pop(key, None)
+        
+    print(f"🔍 Simulating Sample {sample_id} at {sweep_param} = {target_value}...")
+    
+    # 3. Run the physics engine (Returns full z_history dictionary!)
+    results = SCN_entrain(**sim_config, **pack)
+    
+    z_history = results['z_history']
+    timesteps = results['timesteps']
+    light_onset = results['light_onset']
+    dt = results['dt']
+    
+    # ==========================================
+    # 4. CALCULATE UNWRAPPED PHASE DIFFERENCE
+    # ==========================================
+    # A. Get the Mean Field (Kuramoto Order Parameter)
+    Z_mean = np.mean(z_history, axis=0) 
+    mean_phase = np.angle(Z_mean)
+    
+    # B. Unwrap it so it doesn't snap at +pi/-pi
+    unwrapped_phase = np.unwrap(mean_phase)
+    
+    # C. Generate the ideal 24h reference clock phase
+    ideal_omega = 2.0 * np.pi / 24.0
+    reference_phase = ideal_omega * timesteps
+    
+    # D. Calculate the difference and convert to hours for intuition
+    phase_diff_rad = unwrapped_phase - reference_phase
+    
+    # Zero out the phase difference at the moment the light turns on to see the drift clearly
+    if 0 < light_onset < len(phase_diff_rad):
+         phase_diff_rad -= phase_diff_rad[light_onset]
+         
+    phase_diff_hours = phase_diff_rad * (24.0 / (2 * np.pi))
+    
+    # ==========================================
+    # 5. PLOT THE PHASE WALK
+    # ==========================================
+    plt.figure(figsize=(12, 5))
+    
+    # Plot the time axis in Days instead of raw timesteps
+    days = timesteps / 24.0 
+    plt.plot(days, phase_diff_hours, color='crimson', linewidth=2, label='Phase Drift')
+    
+    plt.axhline(0, color='black', linestyle='--', alpha=0.5, label='Perfect Entrainment (0h Diff)')
+    plt.axvline(light_onset * dt / 24.0, color='orange', linestyle=':', label='Light Onset')
+    
+    plt.title(f"Micro-Time Investigation: Sample {sample_id} @ {sweep_param} = {target_value}", fontweight='bold')
+    plt.xlabel("Time (Days)")
+    plt.ylabel("Phase Difference (Hours)")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    plot_dynamics(results)
+    return 
+
+def plot_phase_walk(base_config, sweep_param, target_values, sample_id, master_seed=42):
+    """
+    Summons a specific sample and simulates it across MULTIPLE parameter values, 
+    plotting all phase walks on the same axes for direct comparison.
+    """
+    # 1. Reverse-engineer the exact seed pack for this specific sample_ID
+    master_seq = np.random.SeedSequence(master_seed)
+    streams = master_seq.spawn((sample_id + 1) * 6) 
+    
+    idx = sample_id * 6
+    pack = {
+        'init_seed': streams[idx].generate_state(1)[0],
+        'period_seed': streams[idx+1].generate_state(1)[0],
+        'W_seed': streams[idx+2].generate_state(1)[0],
+        'm_noise_seed': streams[idx+3].generate_state(1)[0],
+        'phase_noise_seed': streams[idx+4].generate_state(1)[0],
+        'syn_noise_seed': streams[idx+5].generate_state(1)[0]
+    }
+    
+    # 2. Setup the Plot and Colormap
+    plt.figure(figsize=(12, 6))
+    
+    first_light_onset = None
+    stored_dt = None
+    
+    print(f" Simulating Sample {sample_id} across {len(target_values)} values of {sweep_param}...")
+
+    if len(target_values) > 1:
+        # Create a color gradient (e.g., from blue to red) based on the target values
+        norm = mcolors.Normalize(vmin=min(target_values), vmax=max(target_values))
+        cmap = cm.viridis  # type: ignore
+
+    # 3. Loop through every requested value
+    for val in target_values:
+        sim_config = base_config.copy()
+        sim_config['sweep'] = False
+        sim_config['single_sample'] = True
+        sim_config[sweep_param] = val
+        
+        for key in ['init_seed', 'period_seed', 'W_seed', 'm_noise_seed', 'phase_noise_seed', 'syn_noise_seed']:
+            sim_config.pop(key, None)
+            
+        # Run the physics engine
+        results = SCN_entrain(**sim_config, **pack)
+        
+        z_history = results['z_history']
+        timesteps = results['timesteps']
+        light_onset = results['light_onset']
+        dt = results['dt']
+        
+        # Save the first light onset for plotting the vertical reference line later
+        if first_light_onset is None:
+            first_light_onset = light_onset
+            stored_dt = dt
+        
+        # Calculate Unwrapped Phase
+        Z_mean = np.mean(z_history, axis=0) 
+        unwrapped_phase = np.unwrap(np.angle(Z_mean))
+        
+        ideal_omega = 2.0 * np.pi / 24.0
+        reference_phase = ideal_omega * timesteps
+        
+        phase_diff_rad = unwrapped_phase - reference_phase
+        
+        # Zero out at light onset
+        if 0 < light_onset < len(phase_diff_rad):
+            phase_diff_rad -= phase_diff_rad[light_onset]
+            
+        phase_diff_hours = phase_diff_rad * (24.0 / (2 * np.pi))
+        
+        days = timesteps / 24.0 
+        # Plot this specific line with its mapped color
+        if len(target_values) > 1:
+            plt.plot(days, phase_diff_hours, color=cmap(norm(val)), linewidth=1.5, alpha=0.8, label=f"{val:.2f}")
+        
+        elif len(target_values) == 1:
+            plt.plot(days, phase_diff_hours, color='crimson', linewidth=2, label='Phase Drift')
+
+    # 4. Formatting the unified plot
+    plt.axhline(0, color='black', linestyle='--', alpha=0.5, label='0h Diff (Perfect Lock)')
+    
+    if first_light_onset is not None:
+        plt.axvline(first_light_onset * stored_dt / 24.0, color='orange', linestyle=':', label='Approx Light Onset')
+    
+    plt.title(f"Phase Drift Dynamics: Sample {sample_id} | Varying {sweep_param}", fontweight='bold', fontsize=14)
+    plt.xlabel("Time (Days)", fontsize=12)
+    plt.ylabel("Phase Difference (Hours)", fontsize=12)
+    plt.grid(True, alpha=0.3)
+    
+    # Create a nice legend for the parameters
+    plt.legend(title=f"{sweep_param} values", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.show()
+
+    if len(target_values) == 1:
+        plot_dynamics(results)
+
+    return
+
+
