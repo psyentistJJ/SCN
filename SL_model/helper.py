@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from matplotlib.gridspec import GridSpec
 from matplotlib.colors import ListedColormap
 from matplotlib.collections import LineCollection
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -55,6 +56,7 @@ def phase2sun(s: np.ndarray):
     return (abs(np.cos(s))+np.cos(s))/2
 
 def plot_dynamics(results: dict,
+                  focus_day: int| None = None,
                   autoshow: bool = True):
 
     N, duration =results['z_history'].shape
@@ -67,25 +69,22 @@ def plot_dynamics(results: dict,
     imag_parts = np.imag(z_history)
     R_phase = results['R_phase']
 
-    z_mean = np.mean(z_history, axis=0)
+    mean_field = np.mean(z_history, axis=0)
     
-    ##### mf stands for mean field #####
-    mf_real = np.real(z_mean)
-    mf_imag = np.imag(z_mean)
-    mf_angle = np.angle(z_mean)
-    mf_amplitude = np.abs(z_mean)
+    mf_real = np.real(mean_field)
+    mf_imag = np.imag(mean_field)
+    mf_angle = np.angle(mean_field)
+    mf_amplitude = np.abs(mean_field)
 
-    unwrapped_angle = np.unwrap(mf_angle)
-    network_frequency, _ = np.polyfit(timesteps, unwrapped_angle, deg=1)
-    emergent_period = (2.0 * np.pi) / np.abs(network_frequency)
 
+    ############################## main plotting #################################
     if N < 2:
-            
+        
         ind_angle = mf_angle
         ind_amplitude = mf_amplitude
 
         fig0, axs = plt.subplots(1, 2, figsize=(12,15))
-        # plot (0)
+        # plot (0,0)
         steps_per_day = int(24 / dt)
         psi_2d = ind_angle[:].reshape(D, steps_per_day)
         im=axs[0].imshow(
@@ -101,7 +100,7 @@ def plot_dynamics(results: dict,
         axs[0].set_ylabel('Day')
         cbar = fig0.colorbar(im, ax=axs[0], label='Phase Angle (rad)', shrink=0.3)
 
-        # plot(1)
+        # plot(0,1)
         axs[1].plot(real_parts[0], imag_parts[0], c='red')
         axs[1].axhline(0, color='black', linewidth=0.5)
         axs[1].axvline(0, color='black', linewidth=0.5)
@@ -113,9 +112,11 @@ def plot_dynamics(results: dict,
         axs[1].set_aspect('equal')
 
 
-        
+        unwrapped_angle = np.unwrap(mf_angle)
+        network_frequency, _ = np.polyfit(timesteps, unwrapped_angle, deg=1)
+        emergent_period = (2.0 * np.pi) / np.abs(network_frequency)
 
-        # plot(2)
+        # row 2, plot 0
         fig1 = plt.figure(figsize=(12,5))
         plt.plot(timesteps/24, np.cos(ind_angle), label = 'phase')
         plt.plot(timesteps/24, ind_amplitude, label = 'certainty')
@@ -126,7 +127,8 @@ def plot_dynamics(results: dict,
         plt.title(f'empirical period:{emergent_period :.2f}hr')
         plt.legend()  
         
-        plt.tight_layout();
+        plt.tight_layout()
+        plt.show()
 
         if autoshow==False:
             plt.close(fig0)
@@ -146,15 +148,11 @@ def plot_dynamics(results: dict,
         base_width = 12
         base_height = 15
 
-        scale = np.clip(spread / 1.2, 1.0, 2.5)
+        scale = np.clip(spread / 2.5, 1.0, 2.5)
 
-        fig0, axs = plt.subplots(
-            1, 
-            3, 
-            figsize=(base_width * scale, base_height * scale)
-            )
+        fig0, axs = plt.subplots(1, 2, figsize=(base_width * scale, base_height * scale))
         
-        #### plot (0) ####  
+        #### plot (0,0) ####  
         steps_per_day = int(24 / dt)
         psi_2d = mf_angle[:].reshape(D, steps_per_day)
 
@@ -173,84 +171,135 @@ def plot_dynamics(results: dict,
         #cbar = fig0.colorbar(im, ax=axs[0], shrink = 0.1)
 
 
-        #### plot (1) #### 
-        for i in range(5):
-            axs[1].plot(real_parts[i, :], imag_parts[i, :], alpha=0.8)
-        axs[1].axhline(0, color='black', linewidth=0.5)
-        axs[1].axvline(0, color='black', linewidth=0.5)
-        axs[1].set_title("Individual Dynamics")
-        axs[1].set_xlabel("Real Part (Firing Rate Deviation)")
-        axs[1].set_ylabel("Imaginary Part")
-        axs[1].grid(True, linestyle='--', alpha=0.6)
-        axs[1].set_aspect('equal')
+        #### plot (0,1) #### 
 
+        #pop-out
+        if focus_day is not None:
+            focus_slice_start = int(24/dt) * (focus_day-1)
+            focus_slice_end = int(24/dt) * focus_day
+            if focus_slice_start <1 :
+                mf_real_background = mf_real[focus_slice_end:]
+                mf_imag_background = mf_imag[focus_slice_end:]
+            else:
+                mf_real_background = np.concatenate((mf_real[:focus_slice_start], mf_real[focus_slice_end:]))
+                mf_imag_background = np.concatenate((mf_imag[:focus_slice_start], mf_imag[focus_slice_end:]))
 
-        #### plot (2) #### 
-        base_cmap = plt.get_cmap('tab20')
-        
-        # Create a custom colormap that cycles through up to 20 distinct colors 
-        # (If you have more than 20 days, it safely loops back to the start)
-        color_list = [base_cmap(i % 20) for i in range(D)]
-        discrete_cmap = ListedColormap(color_list)
-        
-        for day in range(D):
-            start_idx = day * steps_per_day
-            end_idx = min((day + 1) * steps_per_day + 1, duration)
-            
-            # Fetch the highly distinct color for this specific day
-            color = discrete_cmap(day)
-            
-            # Plot the continuous line for the day
-            axs[2].plot(mf_real[start_idx:end_idx], mf_imag[start_idx:end_idx], 
-                        color=color, linewidth=1.5)
-            
-            # 2. Add a marker at the very first timestep of each day
-            axs[2].plot(mf_real[start_idx], mf_imag[start_idx], 
-                        marker='o', color=color, markersize=6, markeredgecolor='black', markeredgewidth=0.5)
-            
-        axs[2].axhline(0, color='black', linewidth=0.5)
-        axs[2].axvline(0, color='black', linewidth=0.5)
-        axs[2].set_title("Populational Dynamics")
-        axs[2].set_xlabel("Real Part (Firing Rate Deviation)")
-        axs[2].set_ylabel("Imaginary Part")
-        axs[2].grid(True, linestyle='--', alpha=0.6)
-        axs[2].set_aspect('equal')
+            axs[1].plot(mf_real_background, mf_imag_background, c='red', linewidth=1.5, alpha = 0.3)
 
-        sm = plt.cm.ScalarMappable(cmap=base_cmap, norm=mcolors.Normalize(vmin=-0.5, vmax=D-0.5))
-        cbar = fig0.colorbar(sm, ax=axs[2], shrink=0.5)
-        
-        # Format the colorbar ticks to show integer days
-        cbar.set_ticks(range(D))
-        cbar.set_label('Day')
+            # ============================================================#  
 
+            mf_real_focus = mf_real[ focus_slice_start : focus_slice_end ]
+            mf_imag_focus = mf_imag[ focus_slice_start : focus_slice_end ]
+
+            axs[1].plot(mf_real_focus, mf_imag_focus, c='black', linewidth = 1 ,zorder = 3)
+            axs[1].scatter(mf_real_focus, mf_imag_focus, c='red', s = 8, zorder = 4)
+
+            # start of focus day
+            axs[1].scatter(
+            mf_real_focus[0], mf_imag_focus[0],
+            c='red', s=100, marker='o', label='start', zorder = 4, edgecolors='black'
+            )
+
+            # end of focus day
+            axs[1].scatter(
+                mf_real_focus[-1], mf_imag_focus[-1],
+                c='black', s=100, marker='x', label='end', linewidth=2 , zorder = 5
+            )
+
+            axs[1].axhline(0, color='black', linewidth=0.5)
+            axs[1].axvline(0, color='black', linewidth=0.5)
+            axs[1].set_title("Populational Dynamics")
+            axs[1].set_xlabel("Real Part (Firing Rate Deviation)")
+            axs[1].set_ylabel("Imaginary Part")
+            axs[1].grid(True, linestyle='--', alpha=0.6)
+            axs[1].set_aspect('equal')
+
+        #standard
+        else:
+            axs[1].plot(mf_real, mf_imag, c='red', linewidth=1.5)
+            axs[1].axhline(0, color='black', linewidth=0.5)
+            axs[1].axvline(0, color='black', linewidth=0.5)
+            axs[1].set_title("Populational Dynamics")
+            axs[1].set_xlabel("Real Part (Firing Rate Deviation)")
+            axs[1].set_ylabel("Imaginary Part")
+            axs[1].grid(True, linestyle='--', alpha=0.6)
+            axs[1].set_aspect('equal')
+
+        plt.legend()
         plt.tight_layout()
 
 
 
-        fig1, axs = plt.subplots(1, 2, figsize=(15, 5))
-        light_onset = results['light_onset']
-        s = results['s']
-        angular_diff = np.angle(np.exp(1j*(mf_angle[light_onset:] - s[:duration-light_onset])))
-        axs[0].plot(timesteps/24, mf_angle, label = 'prediction')
-        axs[0].plot(timesteps[light_onset:]/24, s[:duration-light_onset], label = 'ground truth')
-        axs[0].plot(timesteps[light_onset:]/24, np.unwrap(angular_diff), label = 'prediction error')
-        axs[0].set_xticks(range(D+1))
-        axs[0].grid(True, axis="x")
-        axs[0].axhline(y=0, c='black', linestyle='--')
-        axs[0].axvline(x=timesteps[light_onset]/24, c='orange', linestyle=':')
-        axs[0].set_xlabel('Time')
-        axs[0].set_ylabel('angle (rad)')
-        axs[0].legend()
+        fig1 = plt.figure(figsize=(12,5))
 
-        axs[1].plot(timesteps/24, mf_amplitude, label = 'certainty')
-        axs[1].plot(timesteps/24, R_phase, label = 'phase synchrony')
-        axs[1].set_title('synchrony & certainty')
-        axs[1].grid(True, axis="x")
-        axs[1].set_xticks(range(D+1))
-        axs[1].set_xlabel('Time')
-        axs[1].legend()
+        light_onset = results['light_onset'] 
+        s = results['s']    
+        m = results['m']
 
+        unwrapped_angle = np.unwrap(mf_angle[light_onset:])
+        entrained_network_frequency, _ = np.polyfit(timesteps[light_onset:], unwrapped_angle, deg=1)
+        emergent_period = (2.0 * np.pi) / np.abs(entrained_network_frequency)
+
+        plt.plot(timesteps/24, np.cos(mf_angle), label = 'phase')
+        plt.plot(timesteps[light_onset:]/24, np.cos(s[:duration-light_onset]), label = 'true phase')
+        plt.plot(timesteps/24, R_phase)
+        plt.xticks(range(D+1))
+        plt.grid(True, axis="x")
+        plt.axhline(y=0, c='black', linestyle='--')
+        plt.axvline(x=timesteps[light_onset]/24, c='orange', linestyle=':', label='light onset')
+        plt.xlabel('Time')
+        plt.ylabel('cos(phase)')
+        plt.title(f'empirical entrained period:{emergent_period :.2f}hr')
+        plt.legend()  
+
+        fig2, axs = plt.subplots(1, 2, figsize=(15,5))
+        
+        angular_diff_postlight_rad = np.angle(np.exp(1j*(mf_angle[light_onset:] - s[:duration-light_onset])))
+
+        angular_diff_postlight_hour =  angular_diff_postlight_rad * (24.0 / (2 * np.pi))
+        inst_freq = np.gradient(np.unwrap(mf_angle), dt)
+
+        axs[0].plot(timesteps[light_onset:]/24, np.unwrap(angular_diff_postlight_hour))
+        axs[0].set_title('Phase Error')
+        axs[0].set_ylabel('Error (hr)')
+        axs[0].set_xlabel('Time (Hr)')
+
+
+        
+        axs[1].plot(timesteps/24, inst_freq)
+        axs[1].axvline(x=light_onset/(24/dt), linestyle=':', color= "orange")
+        axs[1].set_title('Instantaneous Frequency')
+        axs[1].set_ylabel('Frequency (1/hr)')
+        axs[1].set_xlabel('Time (Hr)')
+        
         plt.tight_layout()
+
+
+        fig3 = plt.figure(figsize=(12,5))
+
+        gs = GridSpec(1, 2, width_ratios=[5, 1], wspace=0.05)
+        ax_main = fig3.add_subplot(gs[0])
+        ax_yhist = fig3.add_subplot(gs[1], sharey=ax_main)
+
+        true_light = phase2sun(s)
+        ax_main.scatter(timesteps[light_onset:]/24, m[:duration-light_onset], label = 'm', color='limegreen' )
+        ax_main.plot(timesteps[light_onset:]/24, true_light[:duration-light_onset], color='orange', linewidth='3')
+        
+        # collapsed y-distribution
+        mask = true_light[:duration-light_onset] > 1e-8
+        vals = m[:duration-light_onset][mask]
+        ax_yhist.hist(
+            vals,
+            bins=40,
+            orientation='horizontal',
+            weights=np.ones_like(vals) / len(vals)*100,
+            alpha=0.6
+        )
+
+        ax_yhist.set_xlabel("Proportion (%)")
+        ax_yhist.tick_params(labelleft=False)
+        ax_yhist.grid(False)
+
 
         if autoshow==False:
             plt.close(fig0)
@@ -259,7 +308,7 @@ def plot_dynamics(results: dict,
         else:
             plt.show()
 
-        return fig0, fig1
+        return fig0, fig1, fig2
 
 def C_impl_entrain(N, 
               n_timestep, 
@@ -480,14 +529,14 @@ def SCN_entrain(
         
     elif sweep:
         verbose = False
-        plv, phase_rmse, period_error, phase_coherence = entrainment_benchmark(
+        mf_amp_avg , phase_coherence, entrainment_ratio, rmse  = entrainment_benchmark(
             z_history, s, timesteps, dt, light_onset, warmup_days=2, verbose=verbose)
     
         return {
-            'plv': plv, 
-            'phase_rmse': phase_rmse, 
-            'period_error': period_error, 
-            'phase_coherence': phase_coherence
+            'mf_amp_avg': mf_amp_avg,  
+            'phase_coherence': phase_coherence,
+            'entrainment_ratio': entrainment_ratio,
+            'rmse': rmse
             }
 
 
@@ -498,7 +547,6 @@ def entrainment_benchmark(
         dt, 
         light_onset, 
         warmup_days = 2, 
-        target_period = 24.0, 
         verbose: bool = False,
         ):
     """
@@ -526,38 +574,52 @@ def entrainment_benchmark(
     s_light_stdy = s_light[warmup_steps:]
     t_light_stdy = t_light[warmup_steps:]
 
-    # --- Benchmark Calculations (Unchanged) ---
-    mean_field = np.mean(z_light_stdy, axis=0)
-    mf_angle = np.angle(mean_field)
 
-    phase_diffs = np.angle(np.exp(1j * (mf_angle - s_light_stdy)))
-    plv = np.abs(np.mean(np.exp(1j * phase_diffs)))
+    mf_light_stdy = np.mean(z_light_stdy, axis=0)
+    mf_angle_light_stdy = np.angle(mf_light_stdy)
 
-    rmse = np.sqrt(np.mean(phase_diffs**2))
-    rmse = rmse/np.pi
 
-    unwrapped_angle = np.unwrap(mf_angle)
-    network_frequency, _ = np.polyfit(t_light_stdy, unwrapped_angle, deg=1)
-    if np.abs(network_frequency) < 1e-9:
-        network_period = np.nan
-        period_error = np.nan
-    else:
-        network_period = (2.0 * np.pi) / np.abs(network_frequency)
-        period_error = network_period-target_period
-        
+    network_frequency, _ = np.polyfit(t_light_stdy, np.unwrap(mf_angle_light_stdy), deg=1)
+    network_period = (2 * np.pi) / network_frequency
+
+    #####################################################################
+    #                  --- Benchmark Calculations ---                   #
+    #####################################################################
+
+    ################ Raw meanfield amplitude: the network health #############
+    mf_amp_avg = np.mean(np.abs(mf_light_stdy))
+
+
+    ########################## The Network Health ############################
     phase_only_vectors = np.exp(1j * np.angle(z_light_stdy))
     phase_coherence = np.mean(np.abs(np.mean(phase_only_vectors, axis=0)))
+
+
+    ################ Circular rmse (wobbles around the signal) ################
+    phase_diffs = np.angle(np.exp(1j * (mf_angle_light_stdy - s_light_stdy)))
+    rmse = np.sqrt(np.mean(phase_diffs**2))
+    rmse = rmse * (24/(2*np.pi)) # from rad to hr
+        
+
+    ##################### Entrainment ratio (Cycle drift) ######################
+    cycles_network = (np.unwrap(mf_angle_light_stdy)[-1] - np.unwrap(mf_angle_light_stdy)[0]) / (2 * np.pi)
+    cycles_light = (np.unwrap(s_light_stdy)[-1] - np.unwrap(s_light_stdy)[0]) / (2 * np.pi)
+    entrainment_ratio = cycles_network / cycles_light
+
 
     if verbose:
         print(f"network period: {network_period}")
         print("====== SCN TRACKING BENCHMARKS ======")
-        print(f"1. Phase-Locking Value (PLV) : {plv:.4f}  (Ideal: 1.0 -> Stable locking)")
-        print(f"2. Circular RMSE             : {rmse:.4f} π (Ideal: 0.0 -> Perfect prediction)")
-        print(f"3. Period Matching Error     : {period_error:.4f} hr (Ideal: 0.0 -> 24h entrainment)")
-        print(f"4. Phase Coherence           : {phase_coherence:.4f}  (Ideal: 1.0 -> High precision/unity)")
+        print(f"1. Raw amplitude             : {mf_amp_avg :.4f}")
+        print(f"2. R_phase                   : {phase_coherence:.4f}  (Ideal: 1.0  -> zero spread)")
+        print(f"3. entrainment ratio         : {entrainment_ratio:.4f}  (Ideal: 1.0 -> cycle attendance rate )")
+        print(f"4. Circular RMSE             : {rmse:.4f}  hr (Ideal: 0.0 -> no wobbling)")
         print("=====================================")
 
-    return plv, rmse, period_error , phase_coherence
+    return mf_amp_avg , phase_coherence, entrainment_ratio, rmse
+
+
+
 
 def run_1D_sweep(
         base_config: dict,
@@ -1275,13 +1337,12 @@ def run_1D_ensemble(
     agg_df = massive_raw_df.groupby(sweep_param)[metrics].agg(['mean', 'std']).reset_index()
     agg_df.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in agg_df.columns]
 
-    max_spaghetti_samples = min(n_sample, 10)
-    capped_df = massive_raw_df[massive_raw_df['sample_ID'] < max_spaghetti_samples]
+    full_raw_df = massive_raw_df
 
     payload = {
         'metadata': experiment_identity,
         'data': agg_df,
-        'raw_data': capped_df,
+        'raw_data': full_raw_df,
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
@@ -1311,15 +1372,31 @@ def run_1D_ensemble(
 
     return payload
 
-def plotting_1D_ensemble(payload, mode='standard'):
+def plotting_1D_ensemble(payload, mode='standard', n_overlay_samples=None):
     """
     Integrated Plotting Function for ALL benchmarks.
     mode: 'standard' (Mean + Shaded Std Dev) or 'overlay' (Individual samples + Mean)
     """
+
     df = payload['data']
     raw_df = payload['raw_data']
+
     meta = payload['metadata']
     sweep_param = meta['sweep_param']
+    sweep_range = meta['sweep_range']
+    n_sample = meta['n_sample']
+    background_config = meta['background_config']
+
+    interval = sweep_range[1] - sweep_range[0]
+
+    print("========= CONFIGURATION =========")
+    pprint(background_config, sort_dicts=False)
+    print(f'{sweep_param}: ({sweep_range[0]:.3f}, {sweep_range[-1] + interval :.3f}, {interval})')
+    print("=================================\n")
+
+    if mode == 'overlay' and n_overlay_samples is not None:
+        selected_ids = sorted(raw_df['sample_ID'].unique())[:n_overlay_samples]
+        raw_df = raw_df[raw_df['sample_ID'].isin(selected_ids)]
     
     # 1. Identify all benchmarks automatically
     benchmarks = [col.replace('_mean', '') for col in df.columns if col.endswith('_mean')]
@@ -1355,8 +1432,9 @@ def plotting_1D_ensemble(payload, mode='standard'):
         elif mode == 'standard':
             # Standard Mode (Mean + Shaded Std Dev)
             y_std = df[f"{bm}_std"]
+            y_std_err = y_std/np.sqrt(n_sample)
             axs[i].plot(x, y_mean, label='Mean', color='blue', linewidth=2)
-            axs[i].fill_between(x, y_mean - y_std, y_mean + y_std, alpha=0.2, color='blue')
+            axs[i].fill_between(x, y_mean - 1.96*y_std_err, y_mean + 1.96*y_std_err, alpha=0.2, color='blue', label='95% CI')
         
         else: 
             axs[i].plot(x, y_mean, label='Mean', color='blue', linewidth=2)
@@ -1377,7 +1455,7 @@ def plotting_1D_ensemble(payload, mode='standard'):
         fig.delaxes(axs[j])
 
     # Super title based on mode
-    mode_title = "MACRO-STATE (Mean + Variance)" if mode == 'standard' else "MICRO-STATE (Individual Trajectories)"
+    mode_title = "MACRO-STATE (Mean + 95% CI)" if mode == 'standard' else "MICRO-STATE (Individual Trajectories)"
     fig.suptitle(f"1D ENSEMBLE SWEEP: {mode_title}", fontsize=16, fontweight='bold', y=1.02)
 
     plt.tight_layout()
@@ -1535,7 +1613,13 @@ def plot_unwrapped_phase_walk(base_config, D, sweep_param, target_value, sample_
     plot_dynamics(results)
     return 
 
-def plot_phase_walk(base_config, sweep_param, target_values, sample_id, master_seed=42):
+def plot_phase_walk(
+        base_config,
+        sample_id, 
+        sweep_param, 
+        target_values, 
+        master_seed=42, 
+        focus_day: int| None = None):
     """
     Summons a specific sample and simulates it across MULTIPLE parameter values, 
     plotting all phase walks on the same axes for direct comparison.
@@ -1625,12 +1709,12 @@ def plot_phase_walk(base_config, sweep_param, target_values, sample_id, master_s
     plt.grid(True, alpha=0.3)
     
     # Create a nice legend for the parameters
-    plt.legend(title=f"{sweep_param} values", bbox_to_anchor=(1.05, 1), loc='upper left')
+    #plt.legend(title=f"{sweep_param} values", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.show()
 
     if len(target_values) == 1:
-        plot_dynamics(results)
+        plot_dynamics(results, focus_day)
 
     return
 

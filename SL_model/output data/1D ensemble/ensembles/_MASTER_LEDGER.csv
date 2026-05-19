@@ -1,4 +1,2 @@
 timestamp,hash_id,sweep_param,n_sample,master_seed,N,D,lam,gamma,mean_period,std_period,W_prob,W_mu,W_std,sweep,std_phase_noise,dt,fastmath
-2026-05-18 09:19:43,13ec1ee0,std_m_noise,10,42,100,10,0.1,0.0,23.5,0.0,0.2,0.2,0,True,0.05,0.1,False
-2026-05-18 10:02:52,8acf9e90,std_m_noise,10,42,100,10,0.1,0.0,23.5,0.0,0.2,0.2,0,True,0.05,0.1,False
-2026-05-18 10:08:26,b4fb8642,std_m_noise,10,42,100,10,0.1,0.0,23.5,0.0,0.2,0.2,0,True,0.05,0.1,False
+2026-05-20 03:59:54,41459b63,std_m_noise,20,42,100,10,0.1,0.0,23.5,0.0,0.2,0.2,0,True,0.05,0.1,False
