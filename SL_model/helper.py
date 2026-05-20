@@ -154,13 +154,15 @@ def plot_dynamics(results: dict,
         
         #### plot (0,0) ####  
         steps_per_day = int(24 / dt)
-        psi_2d = mf_angle[:].reshape(D, steps_per_day)
+        D_truncated = len(mf_angle) // steps_per_day
+
+        psi_2d = mf_angle[:D_truncated * steps_per_day].reshape(D_truncated, steps_per_day)
 
         im=axs[0].imshow(
             psi_2d,
             aspect=0.66,
             origin='lower',
-            extent=[0, 24, 0, D],
+            extent=[0, 24, 0, D_truncated],
             cmap='grey',  # or any other colormap 
             interpolation= 'none'  # or 'none'
         )
@@ -310,19 +312,20 @@ def plot_dynamics(results: dict,
 
         return fig0, fig1, fig2
 
-def C_impl_entrain(N, 
-              n_timestep, 
-              dt, 
-              lam, 
-              gamma, 
-              W_prob,
-              omegas, 
-              z_init, 
-              W, 
-              phase_noise,
-              syn_noise,
-              m
-              ):
+def C_impl_entrain(
+        N, 
+        n_timestep, 
+        dt, 
+        lam, 
+        gamma, 
+        W_prob,
+        omegas, 
+        z_init, 
+        W, 
+        phase_noise,
+        syn_noise,
+        m
+        ):
     # Pre-allocate memory
     z_history = np.zeros((N, n_timestep), dtype=np.complex128)
     z = z_init.copy()
@@ -333,13 +336,14 @@ def C_impl_entrain(N,
     linear_rate = np.exp((lam + 1j * omegas)*dt)
     N_syn = max(1.0, N * W_prob) # prevent dividing by zero
     freerun_warmup = int((24*2)/dt)
+    light_n_timestep = len(m)
 
     light_onset=0 ## Placeholder to trick numba!!!
 
     for t in range(n_timestep):
         z_history[:, t] = z
         
-        if t == (n_timestep - 1):  # last iter is waste! break!
+        if t == (n_timestep - 1) or (light == True and (t-light_onset) > (light_n_timestep-1)):  # last iter is waste! break!
             break
         
         # --- Deterministic Drift ---
@@ -355,7 +359,7 @@ def C_impl_entrain(N,
             z_hypothetical = z * phase_noise[:,t]
             
             if not light:
-                # Numba optimizes these mean calculations incredibly well
+                
                 rotated_history = np.mean(z_history[:, t]) * rotation
                 rotated_hypo = np.mean(z_hypothetical) * rotation
                 
@@ -366,9 +370,12 @@ def C_impl_entrain(N,
                     z = z_hypothetical
             
             if light:
-                # Vectorized update mapped straight to memory
                 I_ext = m[t - light_onset] + 0.0j 
                 z = (z + (I_ext * dt)) * phase_noise[:,t]
+    
+
+    exp_end = light_onset + light_n_timestep
+    z_history = z_history[:, :exp_end]
                 
     return z_history, light_onset
 
@@ -380,7 +387,7 @@ C_impl_entrain_strictmath: Any = decorator_object(C_impl_entrain)
 
 def SCN_entrain(
         N, 
-        D, 
+        D, # number of days intended for entrainment (from light_onset to the end)
         lam, 
         gamma, 
         mean_period, 
@@ -402,8 +409,8 @@ def SCN_entrain(
         phase_noise_seed = 442,
         syn_noise_seed = 542
         ):
-    # 1. SETUP & SEED QUARANTINE (Runs in Python)
-    T = 24 * D
+    # 1. Initialization
+    T = 24 * (D+3) # 2 freerun warmup days + 1-day flexibility for alignment
     timesteps = np.arange(0, T, dt)                 
     n_timestep = len(timesteps)
 
@@ -502,9 +509,11 @@ def SCN_entrain(
                                         syn_noise, 
                                         m
                                         )
+        
+    exp_end = light_onset + len(m)
+    timesteps = timesteps[:exp_end]
 
-
-    # 3. METRICS & PACKAGING (Runs in Python)
+    # 3. METRICS & PACKAGING 
     phase_only_vectors = np.exp(1j * np.angle(z_history))
     R_phase = np.abs(np.mean(phase_only_vectors, axis=0)) 
 
@@ -550,7 +559,6 @@ def entrainment_benchmark(
         verbose: bool = False,
         ):
     """
-    Evaluate how well the SCN population phase tracks the true latent phase.
     Metrics are computed for the steady state portion during lights-on period.
     """
     if z_history.ndim != 2:
@@ -558,28 +566,19 @@ def entrainment_benchmark(
     
     # 1. Extract data when light is on
     # The network experiences light starting from index `light_onset`
-    z_light = z_history[:, light_onset:]
-    t_light = timesteps[light_onset:]
-    
-    # The external signal `s` starts its cycle at index 0 from the network's perspective
-    light_duration = z_light.shape[1]
-    s_light = s[:light_duration]
+    warmup_steps = int(round(24 * warmup_days/dt))
+    eval_start = light_onset + warmup_steps
 
-    # 2. Further extract steady-state 
-    warmup_steps = int(round(24.0  * warmup_days / dt))
-    if warmup_steps >= light_duration - 2:
-        raise ValueError("warmup_days leaves too few samples after light_onset for benchmark evaluation")
-
-    z_light_stdy = z_light[:, warmup_steps:]
-    s_light_stdy = s_light[warmup_steps:]
-    t_light_stdy = t_light[warmup_steps:]
+    z_eval = z_history[:, eval_start:]
+    s_eval = s[warmup_steps:]
+    t_eval = timesteps[eval_start:]
 
 
-    mf_light_stdy = np.mean(z_light_stdy, axis=0)
-    mf_angle_light_stdy = np.angle(mf_light_stdy)
+    mf_eval = np.mean(z_eval, axis=0)
+    mf_angle_eval = np.angle(mf_eval)
 
 
-    network_frequency, _ = np.polyfit(t_light_stdy, np.unwrap(mf_angle_light_stdy), deg=1)
+    network_frequency, _ = np.polyfit(t_eval, np.unwrap(mf_angle_eval), deg=1)
     network_period = (2 * np.pi) / network_frequency
 
     #####################################################################
@@ -587,24 +586,21 @@ def entrainment_benchmark(
     #####################################################################
 
     ################ Raw meanfield amplitude: the network health #############
-    mf_amp_avg = np.mean(np.abs(mf_light_stdy))
-
+    mf_amp_avg = np.mean(np.abs(mf_eval))
 
     ########################## The Network Health ############################
-    phase_only_vectors = np.exp(1j * np.angle(z_light_stdy))
+    phase_only_vectors = np.exp(1j * np.angle(z_eval))
     phase_coherence = np.mean(np.abs(np.mean(phase_only_vectors, axis=0)))
 
-
     ################ Circular rmse (wobbles around the signal) ################
-    phase_diffs = np.angle(np.exp(1j * (mf_angle_light_stdy - s_light_stdy)))
+    phase_diffs = np.angle(np.exp(1j * (mf_angle_eval - s_eval)))
     rmse = np.sqrt(np.mean(phase_diffs**2))
     rmse = rmse * (24/(2*np.pi)) # from rad to hr
-        
 
     ##################### Entrainment ratio (Cycle drift) ######################
-    cycles_network = (np.unwrap(mf_angle_light_stdy)[-1] - np.unwrap(mf_angle_light_stdy)[0]) / (2 * np.pi)
-    cycles_light = (np.unwrap(s_light_stdy)[-1] - np.unwrap(s_light_stdy)[0]) / (2 * np.pi)
-    entrainment_ratio = cycles_network / cycles_light
+    n_cycle_network = (np.unwrap(mf_angle_eval)[-1] - np.unwrap(mf_angle_eval)[0]) / (2 * np.pi)
+    n_cycle_light = (np.unwrap(s_eval)[-1] - np.unwrap(s_eval)[0]) / (2 * np.pi)
+    entrainment_ratio = n_cycle_network / n_cycle_light
 
 
     if verbose:
@@ -1392,6 +1388,7 @@ def plotting_1D_ensemble(payload, mode='standard', n_overlay_samples=None):
     print("========= CONFIGURATION =========")
     pprint(background_config, sort_dicts=False)
     print(f'{sweep_param}: ({sweep_range[0]:.3f}, {sweep_range[-1] + interval :.3f}, {interval})')
+    print(f'sample size: {n_sample}')
     print("=================================\n")
 
     if mode == 'overlay' and n_overlay_samples is not None:
@@ -1455,8 +1452,6 @@ def plotting_1D_ensemble(payload, mode='standard', n_overlay_samples=None):
         fig.delaxes(axs[j])
 
     # Super title based on mode
-    mode_title = "MACRO-STATE (Mean + 95% CI)" if mode == 'standard' else "MICRO-STATE (Individual Trajectories)"
-    fig.suptitle(f"1D ENSEMBLE SWEEP: {mode_title}", fontsize=16, fontweight='bold', y=1.02)
 
     plt.tight_layout()
     plt.show()
@@ -1650,6 +1645,12 @@ def plot_phase_walk(
         # Create a color gradient (e.g., from blue to red) based on the target values
         norm = mcolors.Normalize(vmin=min(target_values), vmax=max(target_values))
         cmap = cm.viridis  # type: ignore
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([]) # This is a matplotlib quirk required to make it work without an image
+        
+        # Add the colorbar to the current axes
+        cbar = plt.colorbar(sm, ax=plt.gca())
+        cbar.set_label(f"{sweep_param} Magnitude", rotation=270, labelpad=15, fontweight='bold')
 
     # 3. Loop through every requested value
     for val in target_values:
@@ -1693,6 +1694,7 @@ def plot_phase_walk(
         # Plot this specific line with its mapped color
         if len(target_values) > 1:
             plt.plot(days, phase_diff_hours, color=cmap(norm(val)), linewidth=1.5, alpha=0.8, label=f"{val:.2f}")
+            
         
         elif len(target_values) == 1:
             plt.plot(days, phase_diff_hours, color='crimson', linewidth=2, label='Phase Drift')
@@ -1717,5 +1719,3 @@ def plot_phase_walk(
         plot_dynamics(results, focus_day)
 
     return
-
-
